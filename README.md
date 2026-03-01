@@ -26,7 +26,17 @@ python src/generate_trajectory.py .\audio\your_song.mp3 `
   --onset-quantile 0.9
 ```
 
-## 2) CSV Schema
+## 2) Convert MP3 to WAV
+
+Convert `mp3 -> wav`:
+
+```powershell
+ffmpeg -i .\audio\your_song.mp3 -ac 2 -ar 44100 .\audio\your_song.wav
+```
+
+If `ffmpeg` is not recognized, locate `ffmpeg.exe` and run it with an absolute path.
+
+## 3) CSV Schema
 
 Generated columns:
 
@@ -38,7 +48,7 @@ Generated columns:
 - `accent`: onset accent pulse term (radians)
 - `tempo_bpm`: estimated BPM
 
-## 3) Play Trajectory in PyBullet
+## 4) Play Trajectory in PyBullet
 
 ```powershell
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --realtime
@@ -54,20 +64,10 @@ python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --realtime -
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --urdf your_robot.urdf --joint-yaw 0 --joint-pitch 1 --fixed-base
 ```
 
-## 4) Play Trajectory with Audio Sync
+## 5) Play Trajectory with Audio Sync
 
 Audio sync in the current player uses `winsound`, so it supports Windows `.wav` files.
 
 ```powershell
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --audio .\audio\your_song.wav --realtime
 ```
-
-## 5) Convert MP3 to WAV
-
-Convert `mp3 -> wav`:
-
-```powershell
-ffmpeg -i .\audio\your_song.mp3 -ac 2 -ar 44100 .\audio\your_song.wav
-```
-
-If `ffmpeg` is not recognized, locate `ffmpeg.exe` and run it with an absolute path.
