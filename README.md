@@ -7,29 +7,7 @@ This repository provides a minimal offline pipeline for music-driven 2DOF robot 
 3. Save trajectory targets to `CSV`
 4. Play the trajectory in `PyBullet`, with optional synchronized audio playback (Windows `wav`)
 
-## 1) Environment Setup (Conda Recommended)
-
-```powershell
-# Create and activate env (first time only)
-conda create -n librosa python=3.11 -y
-conda activate librosa
-
-# Project deps
-pip install -r requirements.txt
-
-# Player dependency
-conda install -c conda-forge pybullet -y
-```
-
-If `conda` is not recognized in PowerShell:
-
-```powershell
-& "C:\Users\Eddie\miniconda3\Scripts\conda.exe" init powershell
-```
-
-Then restart PowerShell.
-
-## 2) Generate Trajectory CSV
+## 1) Generate Trajectory CSV
 
 ```powershell
 python src/generate_trajectory.py .\audio\your_song.mp3 --out .\outputs\trajectory.csv
@@ -48,7 +26,7 @@ python src/generate_trajectory.py .\audio\your_song.mp3 `
   --onset-quantile 0.9
 ```
 
-## 3) CSV Schema
+## 2) CSV Schema
 
 Generated columns:
 
@@ -60,7 +38,7 @@ Generated columns:
 - `accent`: onset accent pulse term (radians)
 - `tempo_bpm`: estimated BPM
 
-## 4) Play Trajectory in PyBullet
+## 3) Play Trajectory in PyBullet
 
 ```powershell
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --realtime
@@ -76,7 +54,7 @@ python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --realtime -
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --urdf your_robot.urdf --joint-yaw 0 --joint-pitch 1 --fixed-base
 ```
 
-## 5) Play Trajectory with Audio Sync
+## 4) Play Trajectory with Audio Sync
 
 Audio sync in the current player uses `winsound`, so it supports Windows `.wav` files.
 
@@ -84,13 +62,7 @@ Audio sync in the current player uses `winsound`, so it supports Windows `.wav` 
 python src/play_trajectory_pybullet.py --csv outputs/trajectory.csv --audio .\audio\your_song.wav --realtime
 ```
 
-## 6) Convert MP3 to WAV
-
-Install command-line `ffmpeg`:
-
-```powershell
-winget install -e --id Gyan.FFmpeg
-```
+## 5) Convert MP3 to WAV
 
 Convert `mp3 -> wav`:
 
@@ -99,21 +71,3 @@ ffmpeg -i .\audio\your_song.mp3 -ac 2 -ar 44100 .\audio\your_song.wav
 ```
 
 If `ffmpeg` is not recognized, locate `ffmpeg.exe` and run it with an absolute path.
-
-## 7) Troubleshooting
-
-### Q1: `conda` is not recognized
-
-- Cause: PowerShell has not been initialized for conda.
-- Fix: run `conda init powershell`, then restart terminal.
-
-### Q2: `numpy.dtype size changed` when importing `pandas`
-
-- Cause: binary mismatch between `numpy` and `pandas` (often from mixed pip/conda installs).
-- Fix: reinstall both from a single source inside one environment.
-
-### Q3: No audio during playback
-
-- Confirm `--audio` is provided.
-- Confirm file extension is `.wav`.
-- Confirm the audio path exists.
