@@ -1,4 +1,5 @@
-﻿.venv/
-outputs/
+.venv/
+legacy_music_pipeline/outputs/
+adaptive_clap/outputs/
 __pycache__/
 *.pyc
