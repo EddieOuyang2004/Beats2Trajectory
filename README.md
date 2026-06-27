@@ -2,7 +2,7 @@
 
 This repository now contains two separate flows:
 
-- `legacy_music_pipeline/`: the original offline music-to-trajectory pipeline, kept as-is and moved into its own folder
+- `legacy_music_pipeline/`: the offline music-to-trajectory pipeline, now generating clap-style motion from audio features
 - `adaptive_clap/`: a new adaptive tempo project that retimes a looping trajectory from manual taps or microphone clap onsets
 
 ## Project Layout

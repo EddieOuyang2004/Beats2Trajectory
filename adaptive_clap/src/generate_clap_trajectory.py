@@ -1,8 +1,8 @@
 import argparse
+import csv
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +36,7 @@ def generate_cycle(
     open_pitch_deg: float,
     clap_pitch_deg: float,
     bob_deg: float,
-) -> pd.DataFrame:
+) -> dict[str, np.ndarray]:
     n = int(np.floor(cycle_duration * traj_hz)) + 1
     t = np.linspace(0.0, cycle_duration, n)
     phase = np.clip(t / max(cycle_duration, 1e-6), 0.0, 1.0)
@@ -46,23 +46,47 @@ def generate_cycle(
     pitch = np.deg2rad(open_pitch_deg + (clap_pitch_deg - open_pitch_deg) * close_env)
     pitch += np.deg2rad(bob_deg) * np.sin(4.0 * np.pi * phase)
 
-    return pd.DataFrame(
-        {
-            "t": t,
-            "yaw_rad": yaw,
-            "pitch_rad": pitch,
-            "yaw_deg": np.rad2deg(yaw),
-            "pitch_deg": np.rad2deg(pitch),
-            "phase": phase,
-            "close_env": close_env,
-        }
-    )
+    keypoint = np.zeros_like(phase, dtype=int)
+    keypoint_label = np.full(phase.shape, "", dtype=object)
+    beat_weight = np.zeros_like(phase)
+
+    open_idx = int(np.argmin(np.abs(phase - 0.0)))
+    clap_idx = int(np.argmin(np.abs(phase - 0.5)))
+    keypoint[open_idx] = 1
+    keypoint_label[open_idx] = "open"
+    beat_weight[open_idx] = 0.5
+    keypoint[clap_idx] = 1
+    keypoint_label[clap_idx] = "clap"
+    beat_weight[clap_idx] = 1.0
+
+    return {
+        "t": t,
+        "yaw_rad": yaw,
+        "pitch_rad": pitch,
+        "yaw_deg": np.rad2deg(yaw),
+        "pitch_deg": np.rad2deg(pitch),
+        "phase": phase,
+        "close_env": close_env,
+        "keypoint": keypoint,
+        "keypoint_label": keypoint_label,
+        "beat_weight": beat_weight,
+    }
+
+
+def write_csv(path: Path, columns: dict[str, np.ndarray]) -> None:
+    fieldnames = list(columns.keys())
+    row_count = len(next(iter(columns.values())))
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for i in range(row_count):
+            writer.writerow({name: values[i] for name, values in columns.items()})
 
 
 def main() -> None:
     args = parse_args()
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    df = generate_cycle(
+    columns = generate_cycle(
         traj_hz=args.traj_hz,
         cycle_duration=args.cycle_duration,
         yaw_amp_deg=args.yaw_amp_deg,
@@ -70,8 +94,8 @@ def main() -> None:
         clap_pitch_deg=args.clap_pitch_deg,
         bob_deg=args.bob_deg,
     )
-    df.to_csv(args.out, index=False)
-    print(f"Saved adaptive clap trajectory: {args.out} ({len(df)} rows)")
+    write_csv(args.out, columns)
+    print(f"Saved adaptive clap trajectory: {args.out} ({len(next(iter(columns.values())))} rows)")
 
 
 if __name__ == "__main__":

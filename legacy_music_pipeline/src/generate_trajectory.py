@@ -1,6 +1,11 @@
 ﻿import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
+
+NUMBA_CACHE_DIR = Path(__file__).resolve().parents[1] / "outputs" / "numba_cache"
+NUMBA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("NUMBA_CACHE_DIR", str(NUMBA_CACHE_DIR))
 
 import librosa
 import numpy as np
@@ -14,9 +19,10 @@ class Config:
     traj_hz: float
     sr: int
     hop_length: int
-    base_amp_deg: float
-    base_b_amp_deg: float
-    phi: float
+    yaw_amp_deg: float
+    open_pitch_deg: float
+    clap_pitch_deg: float
+    bob_deg: float
     accent_duration: float
     accent_gain_deg: float
     onset_quantile: float
@@ -49,12 +55,10 @@ def compute_phase(t: np.ndarray, beats: np.ndarray, fallback_bpm: float) -> np.n
 
 
 def build_pose_track(t: np.ndarray, beats: np.ndarray, amp_t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    # 4-pose micro-loop (k mod 4)
+    # Beat-to-beat clap keyframes: open -> clap -> open.
     poses_deg = np.array([
-        [20.0, -10.0],
-        [-20.0, 12.0],
-        [15.0, 18.0],
-        [-15.0, -16.0],
+        [0.0, 22.0],
+        [0.0, -24.0],
     ])
     poses = np.deg2rad(poses_deg)
 
@@ -81,6 +85,45 @@ def build_pose_track(t: np.ndarray, beats: np.ndarray, amp_t: np.ndarray) -> tup
     # Loudness-dependent scaling
     q = q * amp_t[:, None]
     return q[:, 0], q[:, 1]
+
+
+def build_clap_motion(
+    phase: np.ndarray,
+    amp_t: np.ndarray,
+    yaw_amp_deg: float,
+    open_pitch_deg: float,
+    clap_pitch_deg: float,
+    bob_deg: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    close_env = 0.5 * (1.0 - np.cos(2.0 * np.pi * phase))
+    yaw = np.deg2rad(yaw_amp_deg) * np.sin(2.0 * np.pi * phase)
+    pitch = np.deg2rad(open_pitch_deg + (clap_pitch_deg - open_pitch_deg) * close_env)
+    pitch += np.deg2rad(bob_deg) * np.sin(4.0 * np.pi * phase)
+
+    neutral_pitch = np.deg2rad(open_pitch_deg)
+    yaw = yaw * amp_t
+    pitch = neutral_pitch + (pitch - neutral_pitch) * amp_t
+    return yaw, pitch, close_env
+
+
+def build_keypoints(phase: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    keypoint = np.zeros_like(phase, dtype=int)
+    keypoint_label = np.full(phase.shape, "", dtype=object)
+    beat_weight = np.zeros_like(phase)
+
+    if phase.size == 0:
+        return keypoint, keypoint_label, beat_weight
+
+    open_idx = int(np.argmin(np.abs(phase - 0.0)))
+    clap_idx = int(np.argmin(np.abs(phase - 0.5)))
+
+    keypoint[open_idx] = 1
+    keypoint_label[open_idx] = "open"
+    beat_weight[open_idx] = 0.5
+    keypoint[clap_idx] = 1
+    keypoint_label[clap_idx] = "clap"
+    beat_weight[clap_idx] = 1.0
+    return keypoint, keypoint_label, beat_weight
 
 
 def build_onset_pulse(
@@ -120,6 +163,8 @@ def generate(cfg: Config) -> pd.DataFrame:
 
     tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, hop_length=cfg.hop_length)
     bpm = float(np.atleast_1d(tempo)[0])
+    if bpm <= 0.0 or not np.isfinite(bpm):
+        bpm = 120.0
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=cfg.hop_length)
 
     rms = librosa.feature.rms(y=y, hop_length=cfg.hop_length)[0]
@@ -135,12 +180,14 @@ def generate(cfg: Config) -> pd.DataFrame:
     amp_t = np.interp(t, rms_times, amp_norm, left=amp_norm[0], right=amp_norm[-1])
     phase = compute_phase(t, beat_times, bpm)
 
-    # Lissajous / "8" motion
-    f = max(bpm / 60.0 / 2.0, 0.2)  # two beats per cycle feels dance-like
-    a_t = np.deg2rad(cfg.base_amp_deg) * amp_t
-    b_t = np.deg2rad(cfg.base_b_amp_deg) * amp_t
-    yaw_lis = a_t * np.sin(2.0 * np.pi * f * t)
-    pitch_lis = b_t * np.sin(4.0 * np.pi * f * t + cfg.phi)
+    yaw_clap, pitch_clap, close_env = build_clap_motion(
+        phase=phase,
+        amp_t=amp_t,
+        yaw_amp_deg=cfg.yaw_amp_deg,
+        open_pitch_deg=cfg.open_pitch_deg,
+        clap_pitch_deg=cfg.clap_pitch_deg,
+        bob_deg=cfg.bob_deg,
+    )
 
     # Beat keyframe interpolation (smoothstep)
     yaw_pose, pitch_pose = build_pose_track(t, beat_times, amp_t)
@@ -155,9 +202,9 @@ def generate(cfg: Config) -> pd.DataFrame:
         quantile=cfg.onset_quantile,
     )
 
-    # Blend recipe: continuous dance + beat pose + accent
-    yaw = yaw_lis + 0.35 * yaw_pose + 0.25 * accent
-    pitch = pitch_lis + 0.35 * pitch_pose + 1.00 * accent
+    yaw = yaw_clap + 0.15 * yaw_pose + 0.20 * accent
+    pitch = pitch_clap + 0.15 * pitch_pose + 0.85 * accent
+    keypoint, keypoint_label, beat_weight = build_keypoints(phase)
 
     df = pd.DataFrame(
         {
@@ -167,9 +214,13 @@ def generate(cfg: Config) -> pd.DataFrame:
             "yaw_deg": np.rad2deg(yaw),
             "pitch_deg": np.rad2deg(pitch),
             "phase": phase,
+            "close_env": close_env,
             "amp_scale": amp_t,
             "accent": accent,
             "tempo_bpm": bpm,
+            "keypoint": keypoint,
+            "keypoint_label": keypoint_label,
+            "beat_weight": beat_weight,
         }
     )
     return df
@@ -184,9 +235,10 @@ def parse_args() -> Config:
     parser.add_argument("--traj-hz", type=float, default=100.0, help="Output trajectory sample rate")
     parser.add_argument("--sr", type=int, default=22050, help="Audio load sample rate")
     parser.add_argument("--hop", type=int, default=512, help="Analysis hop length")
-    parser.add_argument("--base-amp-deg", type=float, default=28.0, help="Base yaw amplitude in degree")
-    parser.add_argument("--base-b-amp-deg", type=float, default=22.0, help="Base pitch amplitude in degree")
-    parser.add_argument("--phi", type=float, default=np.pi / 2.0, help="Pitch phase offset in radians")
+    parser.add_argument("--yaw-amp-deg", type=float, default=18.0, help="Side sway amplitude in degrees")
+    parser.add_argument("--open-pitch-deg", type=float, default=22.0, help="Open clap pose pitch in degrees")
+    parser.add_argument("--clap-pitch-deg", type=float, default=-24.0, help="Closed clap pose pitch in degrees")
+    parser.add_argument("--bob-deg", type=float, default=5.0, help="Small clap bob amplitude in degrees")
     parser.add_argument("--accent-duration", type=float, default=0.15, help="Accent pulse length in seconds")
     parser.add_argument("--accent-gain-deg", type=float, default=12.0, help="Accent pulse gain in degree")
     parser.add_argument("--onset-quantile", type=float, default=0.90, help="Quantile threshold for strong onsets")
@@ -198,9 +250,10 @@ def parse_args() -> Config:
         traj_hz=a.traj_hz,
         sr=a.sr,
         hop_length=a.hop,
-        base_amp_deg=a.base_amp_deg,
-        base_b_amp_deg=a.base_b_amp_deg,
-        phi=float(a.phi),
+        yaw_amp_deg=a.yaw_amp_deg,
+        open_pitch_deg=a.open_pitch_deg,
+        clap_pitch_deg=a.clap_pitch_deg,
+        bob_deg=a.bob_deg,
         accent_duration=a.accent_duration,
         accent_gain_deg=a.accent_gain_deg,
         onset_quantile=a.onset_quantile,
